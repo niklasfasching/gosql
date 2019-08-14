@@ -1,0 +1,3 @@
+* WIP
+a minimalist go sql wrapper that makes sense for the kind of projects i plan to do
+which is: exposing sqlite databases to the internet - as in allowing sql statements over http. yep... let's see how bad that really is
