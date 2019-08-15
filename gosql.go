@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type DB struct {
@@ -87,38 +85,89 @@ func (db *DB) Query(query string, result interface{}, args ...interface{}) error
 		return err
 	}
 	defer rows.Close()
-	switch t := xs.Type().Elem(); t.Kind() {
+	if err := unmarshal(rows, xs); err != nil {
+		return err
+	}
+	return rows.Err()
+}
+
+func unmarshal(rows *sql.Rows, xs reflect.Value) error {
+	t, isPtr := xs.Type().Elem(), false
+	switch t.Kind() {
+	case reflect.Ptr:
+		t, isPtr = t.Elem(), true
+		fallthrough
+	case reflect.Struct:
+		return unmarshalStruct(rows, xs, t, isPtr)
 	case reflect.Interface:
 		t = reflect.TypeOf(map[string]interface{}{})
 		fallthrough
 	case reflect.Map:
-		columns, err := rows.Columns()
-		if err != nil {
-			return err
-		}
-		mt := reflect.MapOf(reflect.TypeOf(""), t.Elem())
-		values := []interface{}{}
-		for range columns {
-			values = append(values, reflect.New(t.Elem()).Interface())
-		}
-		for rows.Next() {
-			if err = rows.Scan(values...); err != nil {
-				return err
-			}
-			x := reflect.MakeMapWithSize(mt, len(columns))
-			for i, column := range columns {
-				x.SetMapIndex(reflect.ValueOf(column), reflect.ValueOf(values[i]).Elem())
-			}
-			xs.Set(reflect.Append(xs, x))
-		}
+		return unmarshalMap(rows, xs, t, isPtr)
 	default:
 		for rows.Next() {
 			x := reflect.New(t)
-			if err = rows.Scan(x.Interface()); err != nil {
+			if err := rows.Scan(x.Interface()); err != nil {
 				return err
 			}
-			xs.Set(reflect.Append(xs, x.Elem()))
+			if !isPtr {
+				x = x.Elem()
+			}
+			xs.Set(reflect.Append(xs, x))
 		}
 	}
-	return rows.Err()
+	return nil
+}
+
+func unmarshalStruct(rows *sql.Rows, xs reflect.Value, t reflect.Type, isPtr bool) error {
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		x := reflect.New(t).Elem()
+		values := []interface{}{}
+		for _, column := range columns {
+			field := x.FieldByName(column) // TODO: use tags / case conversion for struct -> sql field mapping
+			if field.IsValid() {
+				values = append(values, field.Addr().Interface())
+			} else {
+				values = append(values, new(interface{}))
+			}
+		}
+		if err = rows.Scan(values...); err != nil {
+			return err
+		}
+		if isPtr {
+			x = x.Addr()
+		}
+		xs.Set(reflect.Append(xs, x))
+	}
+	return nil
+}
+
+func unmarshalMap(rows *sql.Rows, xs reflect.Value, t reflect.Type, isPtr bool) error {
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	mt := reflect.MapOf(reflect.TypeOf(""), t.Elem())
+	values := []interface{}{}
+	for range columns {
+		values = append(values, reflect.New(t.Elem()).Interface())
+	}
+	for rows.Next() {
+		if err = rows.Scan(values...); err != nil {
+			return err
+		}
+		x := reflect.MakeMapWithSize(mt, len(columns))
+		for i, column := range columns {
+			x.SetMapIndex(reflect.ValueOf(column), reflect.ValueOf(values[i]).Elem())
+		}
+		if isPtr {
+			x = x.Addr()
+		}
+		xs.Set(reflect.Append(xs, x))
+	}
+	return nil
 }
