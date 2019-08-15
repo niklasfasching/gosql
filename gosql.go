@@ -76,16 +76,19 @@ func (db *DB) migrate() error {
 
 func (db *DB) Query(query string, result interface{}, args ...interface{}) error {
 	xs := reflect.ValueOf(result)
-	if t := xs.Type(); result == nil || t.Kind() != reflect.Ptr || t.Elem().Kind() != reflect.Slice {
+	if result != nil && (xs.Type().Kind() != reflect.Ptr || xs.Type().Elem().Kind() != reflect.Slice) {
 		return fmt.Errorf("cannot unmarshal query results into %t (%v)", result, result)
 	}
-	xs = xs.Elem()
+	if result == nil {
+		_, err := db.connection.Exec(query, args...)
+		return err
+	}
 	rows, err := db.connection.Query(query, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	if err := unmarshal(rows, xs); err != nil {
+	if err := unmarshal(rows, xs.Elem()); err != nil {
 		return err
 	}
 	return rows.Err()
