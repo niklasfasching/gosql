@@ -15,11 +15,11 @@ type DB struct {
 	MigrationsDir   string
 	DriverName      string
 	DataSourceName  string
-	connection      *sql.DB
+	*sql.DB
 }
 
 func (db *DB) Open() error {
-	if db.connection != nil {
+	if db.DB != nil {
 		return errors.New("already open")
 	}
 	if db.MigrationsTable == "" {
@@ -32,16 +32,16 @@ func (db *DB) Open() error {
 	if err != nil {
 		return err
 	}
-	db.connection = connection
+	db.DB = connection
 	return db.migrate()
 }
 
-func (db *DB) Close() error { return db.connection.Close() }
+func (db *DB) Close() error { return db.DB.Close() }
 
 func (db *DB) migrate() error {
 	t := db.MigrationsTable
 	q := fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s` (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)", t)
-	if _, err := db.connection.Exec(q); err != nil {
+	if _, err := db.DB.Exec(q); err != nil {
 		return err
 	}
 	applied, m := []string{}, map[string]bool{}
@@ -64,10 +64,10 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return err
 		}
-		if _, err = db.connection.Exec(string(bs)); err != nil {
+		if _, err = db.DB.Exec(string(bs)); err != nil {
 			return err
 		}
-		if _, err := db.connection.Exec(fmt.Sprintf("INSERT INTO `%s` (name) VALUES (?)", t), sqlFile); err != nil {
+		if _, err := db.DB.Exec(fmt.Sprintf("INSERT INTO `%s` (name) VALUES (?)", t), sqlFile); err != nil {
 			return err
 		}
 	}
@@ -80,10 +80,10 @@ func (db *DB) Query(query string, result interface{}, args ...interface{}) error
 		return fmt.Errorf("cannot unmarshal query results into %t (%v)", result, result)
 	}
 	if result == nil {
-		_, err := db.connection.Exec(query, args...)
+		_, err := db.DB.Exec(query, args...)
 		return err
 	}
-	rows, err := db.connection.Query(query, args...)
+	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		return err
 	}
