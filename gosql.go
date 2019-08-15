@@ -1,13 +1,10 @@
-package main
+package gosql
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
-	"net/http"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -21,35 +18,6 @@ type DB struct {
 	DriverName      string
 	DataSourceName  string
 	connection      *sql.DB
-}
-
-func main() {
-	db := &DB{
-		DriverName:     "sqlite3",
-		DataSourceName: "./data.db",
-	}
-	if err := db.Open(); err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-
-	http.Handle("/query", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("query")
-		if query == "" {
-			http.Error(w, "empty query", http.StatusBadRequest)
-			return
-		}
-		results := []interface{}{}
-		if err := db.Query(query, &results); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(results)
-	}))
-	log.Fatal(http.ListenAndServe(":8000", nil))
-
 }
 
 func (db *DB) Open() error {

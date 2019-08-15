@@ -1,3 +1,33 @@
 * WIP
 a minimalist go sql wrapper that makes sense for the kind of projects i plan to do
 which is: exposing sqlite databases to the internet - as in allowing sql statements over http. yep... let's see how bad that really is
+
+#+begin_src go
+func main() {
+	db := &DB{
+		DriverName:     "sqlite3",
+		DataSourceName: "./data.db",
+	}
+	if err := db.Open(); err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	http.Handle("/query", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if query == "" {
+			http.Error(w, "empty query", http.StatusBadRequest)
+			return
+		}
+		results := []interface{}{}
+		if err := db.Query(query, &results); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(results)
+	}))
+	log.Fatal(http.ListenAndServe(":8000", nil))
+}
+#+end_src
