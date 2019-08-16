@@ -77,6 +77,13 @@ func (db *DB) migrate() error {
 }
 
 func (db *DB) Query(query string, result interface{}, args ...interface{}) error {
+	if err := db.query(query, result, args...); err != nil {
+		return fmt.Errorf("%s: %s", query, err)
+	}
+	return nil
+}
+
+func (db *DB) query(query string, result interface{}, args ...interface{}) error {
 	xs := reflect.ValueOf(result)
 	if result != nil && (xs.Type().Kind() != reflect.Ptr || xs.Type().Elem().Kind() != reflect.Slice) {
 		return fmt.Errorf("cannot unmarshal query results into %t (%v)", result, result)
