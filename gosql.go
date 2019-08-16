@@ -2,12 +2,14 @@ package gosql
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 )
 
 type DB struct {
@@ -110,7 +112,7 @@ func unmarshal(rows *sql.Rows, xs reflect.Value) error {
 	default:
 		for rows.Next() {
 			x := reflect.New(t)
-			if err := rows.Scan(x.Interface()); err != nil {
+			if err := scan(rows, []interface{}{x.Interface()}); err != nil {
 				return err
 			}
 			if !isPtr {
@@ -138,7 +140,7 @@ func unmarshalStruct(rows *sql.Rows, xs reflect.Value, t reflect.Type, isPtr boo
 				values = append(values, new(interface{}))
 			}
 		}
-		if err = rows.Scan(values...); err != nil {
+		if err = scan(rows, values); err != nil {
 			return err
 		}
 		if isPtr {
@@ -160,7 +162,7 @@ func unmarshalMap(rows *sql.Rows, xs reflect.Value, t reflect.Type, isPtr bool) 
 		values = append(values, reflect.New(t.Elem()).Interface())
 	}
 	for rows.Next() {
-		if err = rows.Scan(values...); err != nil {
+		if err = scan(rows, values); err != nil {
 			return err
 		}
 		x := reflect.MakeMapWithSize(mt, len(columns))
@@ -173,4 +175,37 @@ func unmarshalMap(rows *sql.Rows, xs reflect.Value, t reflect.Type, isPtr bool) 
 		xs.Set(reflect.Append(xs, x))
 	}
 	return nil
+}
+
+func scan(rows *sql.Rows, values []interface{}) error {
+	tmp := make([]interface{}, len(values))
+	for i := range values {
+		tmp[i] = new(interface{})
+	}
+	if err := rows.Scan(tmp...); err != nil {
+		return err
+	}
+	for i := range values {
+		if err := convert(tmp[i], values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func convert(src, dst interface{}) error {
+	bs, err := json.Marshal(src)
+	if err != nil {
+		return err
+	}
+	switch dst.(type) {
+	case *interface{}:
+		if s := string(bs); len(s) >= 4 && s[0] == '"' && s[len(s)-1] == '"' &&
+			(s[1] == '{' && s[len(s)-2] == '}' || s[1] == '[' && s[len(s)-2] == ']') {
+			if s, err := strconv.Unquote(s); err == nil {
+				bs = []byte(s)
+			}
+		}
+	}
+	return json.Unmarshal(bs, &dst)
 }
