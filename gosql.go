@@ -207,9 +207,9 @@ func convert(src, dst interface{}) error {
 	}
 	switch dst.(type) {
 	case *interface{}:
-		if s := string(bs); len(s) >= 4 && s[0] == '"' && s[len(s)-1] == '"' &&
-			(s[1] == '{' && s[len(s)-2] == '}' || s[1] == '[' && s[len(s)-2] == ']') {
-			if s, err := strconv.Unquote(s); err == nil {
+		if len(bs) >= 4 && bs[0] == '"' && bs[len(bs)-1] == '"' &&
+			(bs[1] == '{' && bs[len(bs)-2] == '}' || bs[1] == '[' && bs[len(bs)-2] == ']') {
+			if s, err := strconv.Unquote(string(bs)); err == nil {
 				bs = []byte(s)
 			}
 		}
