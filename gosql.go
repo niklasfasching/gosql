@@ -205,14 +205,12 @@ func convert(src, dst interface{}) error {
 	if err != nil {
 		return err
 	}
-	switch dst.(type) {
-	case *interface{}:
-		if len(bs) >= 4 && bs[0] == '"' && bs[len(bs)-1] == '"' &&
-			(bs[1] == '{' && bs[len(bs)-2] == '}' || bs[1] == '[' && bs[len(bs)-2] == ']') {
-			if s, err := strconv.Unquote(string(bs)); err == nil {
-				bs = []byte(s)
-			}
+	if _, ok := dst.(*interface{}); ok &&
+		len(bs) >= 4 && bs[0] == '"' && bs[len(bs)-1] == '"' &&
+		(bs[1] == '{' && bs[len(bs)-2] == '}' || bs[1] == '[' && bs[len(bs)-2] == ']') {
+		if s, err := strconv.Unquote(string(bs)); err == nil {
+			bs = []byte(s)
 		}
 	}
-	return json.Unmarshal(bs, &dst)
+	return json.Unmarshal(bs, dst)
 }
