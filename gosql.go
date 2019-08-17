@@ -83,14 +83,18 @@ func (db *DB) Query(query string, result interface{}, args ...interface{}) error
 	return nil
 }
 
+func (db *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
+	result, err := db.DB.Exec(query, args...)
+	if err != nil {
+		err = fmt.Errorf("%s: %s", query, err)
+	}
+	return result, err
+}
+
 func (db *DB) query(query string, result interface{}, args ...interface{}) error {
 	xs := reflect.ValueOf(result)
-	if result != nil && (xs.Type().Kind() != reflect.Ptr || xs.Type().Elem().Kind() != reflect.Slice) {
+	if xs.Type().Kind() != reflect.Ptr || xs.Type().Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("cannot unmarshal query results into %t (%v)", result, result)
-	}
-	if result == nil {
-		_, err := db.DB.Exec(query, args...)
-		return err
 	}
 	rows, err := db.DB.Query(query, args...)
 	if err != nil {
