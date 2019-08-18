@@ -31,3 +31,15 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8000", nil))
 }
 #+end_src
+* security concerns
+- read only databases (mode=ro) still allow stuff like =attach database 'foobar.sqlite' as foobar= and thus gain access to other stuff
+- also pragma are available
+- attach can be disabled via limit attach
+- but actually, there's an authorizer interface!
+
+-> https://stackoverflow.com/questions/3738328/safe-read-only-sqlite3-database
+* features
+
+SELECT * FROM sqlite_master
+-> returns schema! .sql contains the original create table statement
+-> can use that to expose a pretty schema, just like graphql!

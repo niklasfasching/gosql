@@ -10,14 +10,36 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
+
+	"github.com/mattn/go-sqlite3"
+	sqlite "github.com/mattn/go-sqlite3"
 )
+
+type Connection interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
 
 type DB struct {
 	MigrationsTable string
 	MigrationsDir   string
-	DriverName      string
 	DataSourceName  string
+	ReadOnly        bool
+
+	Connection *sqlite.SQLiteConn
 	*sql.DB
+}
+
+var connection *sqlite.SQLiteConn
+
+func init() {
+	sql.Register("gosqlite", &sqlite3.SQLiteDriver{
+		ConnectHook: func(c *sqlite.SQLiteConn) error {
+			connection = c
+			return nil
+		},
+	})
 }
 
 func (db *DB) Open() error {
@@ -30,12 +52,27 @@ func (db *DB) Open() error {
 	if db.MigrationsDir == "" {
 		db.MigrationsDir = "migrations"
 	}
-	connection, err := sql.Open(db.DriverName, db.DataSourceName)
+	sqlDB, err := sql.Open("gosqlite", db.DataSourceName)
 	if err != nil {
 		return err
 	}
-	db.DB = connection
-	return db.migrate()
+	db.DB = sqlDB
+	if err := db.migrate(); err != nil {
+		return err
+	}
+	db.Connection = connection
+	connection = nil
+	if db.ReadOnly {
+		db.Connection.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
+			switch op {
+			case sqlite.SQLITE_SELECT, sqlite.SQLITE_READ, sqlite.SQLITE_FUNCTION:
+				return sqlite.SQLITE_OK
+			default:
+				return sqlite.SQLITE_DENY
+			}
+		})
+	}
+	return nil
 }
 
 func (db *DB) Close() error { return db.DB.Close() }
@@ -47,7 +84,7 @@ func (db *DB) migrate() error {
 		return err
 	}
 	applied, m := []string{}, map[string]bool{}
-	if err := db.Query(fmt.Sprintf("SELECT name FROM `%s`", t), &applied); err != nil {
+	if err := Query(db, fmt.Sprintf("SELECT name FROM `%s`", t), &applied); err != nil {
 		return err
 	}
 	for _, sqlFile := range applied {
@@ -76,27 +113,57 @@ func (db *DB) migrate() error {
 	return nil
 }
 
-func (db *DB) Query(query string, result interface{}, args ...interface{}) error {
-	if err := db.query(query, result, args...); err != nil {
-		return fmt.Errorf("%s: %s", query, err)
+func Query(c Connection, queryString string, result interface{}, args ...interface{}) error {
+	if err := query(c, queryString, result, args...); err != nil {
+		return fmt.Errorf("%s: %s", queryString, err)
 	}
 	return nil
 }
 
-func (db *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
-	result, err := db.DB.Exec(query, args...)
+func Insert(c Connection, table string, v interface{}, ignore bool) (sql.Result, error) {
+	rv, ks, qs, vs := reflect.ValueOf(v), []string{}, []string{}, []interface{}{}
+	switch rv.Kind() {
+	case reflect.Map:
+		m := rv.MapRange()
+		for m.Next() {
+			ks = append(ks, m.Key().String())
+			qs = append(qs, "?")
+			switch v := m.Value().Elem(); v.Kind() {
+			case reflect.Map, reflect.Struct, reflect.Slice:
+				bs, err := json.Marshal(v.Interface())
+				if err != nil {
+					return nil, err
+				}
+				vs = append(vs, string(bs))
+			default:
+				vs = append(vs, v.Interface())
+			}
+		}
+	default:
+		panic(fmt.Errorf("unhandled type %T", v))
+	}
+	maybeIgnore := ""
+	if ignore {
+		maybeIgnore = "OR IGNORE"
+	}
+	query := fmt.Sprintf("INSERT %s INTO %s (%s) VALUES (%s)", maybeIgnore, table, strings.Join(ks, ", "), strings.Join(qs, ", "))
+	return c.Exec(query, vs...)
+}
+
+func Exec(c Connection, queryString string, args ...interface{}) (sql.Result, error) {
+	result, err := c.Exec(queryString, args...)
 	if err != nil {
-		err = fmt.Errorf("%s: %s", query, err)
+		err = fmt.Errorf("%s: %s", queryString, err)
 	}
 	return result, err
 }
 
-func (db *DB) query(query string, result interface{}, args ...interface{}) error {
+func query(c Connection, query string, result interface{}, args ...interface{}) error {
 	xs := reflect.ValueOf(result)
 	if xs.Type().Kind() != reflect.Ptr || xs.Type().Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("cannot unmarshal query results into %t (%v)", result, result)
 	}
-	rows, err := db.DB.Query(query, args...)
+	rows, err := c.Query(query, args...)
 	if err != nil {
 		return err
 	}
