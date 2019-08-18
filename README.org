@@ -4,32 +4,26 @@ which is: exposing sqlite databases to the internet - as in allowing sql stateme
 
 #+begin_src go
 func main() {
-	db := &DB{
-		DriverName:     "sqlite3",
-		DataSourceName: "./data.db",
-	}
+	db := &DB{DataSourceName: "./data.sqlite", ReadOnly: true}
 	if err := db.Open(); err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
-
-	http.Handle("/query", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("query")
-		if query == "" {
-			http.Error(w, "empty query", http.StatusBadRequest)
-			return
-		}
-		results := []interface{}{}
-		if err := db.Query(query, &results); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(results)
-	}))
+	http.Handle("/api", db.Handler())
 	log.Fatal(http.ListenAndServe(":8000", nil))
 }
+#+end_src
+
+#+begin_src bash
+$ curl localhost:8000/api --silent --get --data-urlencode "query=SELECT * FROM sqlite_master LIMIT 1" | jq .
+# [
+#     {
+#         "name": "migrations",
+#         "rootpage": 2,
+#         "sql": "CREATE TABLE `migrations` (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+#         "tbl_name": "migrations",
+#         "type": "table"
+#     }
+# ]
 #+end_src
 * security concerns
 - read only databases (mode=ro) still allow stuff like =attach database 'foobar.sqlite' as foobar= and thus gain access to other stuff
