@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -111,6 +112,34 @@ func (db *DB) migrate() error {
 		}
 	}
 	return nil
+}
+
+func (db *DB) Handler(params ...string) http.Handler {
+	if !db.ReadOnly {
+		panic(errors.New("cannot serve a writable db - set ReadOnly to true"))
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		if len(params) == 0 {
+			params = []string{"query", "q"}
+		}
+		query, result := "", []interface{}{}
+		for i := 0; i < len(params) && query == ""; i++ {
+			query = r.URL.Query().Get(params[i])
+		}
+		if query == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "query must not be empty"})
+			return
+		}
+		if err := Query(db, query, &result); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(result)
+	})
 }
 
 func Query(c Connection, queryString string, result interface{}, args ...interface{}) error {
