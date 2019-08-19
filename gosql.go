@@ -59,9 +59,13 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 			switch op {
 			case sqlite.SQLITE_SELECT, sqlite.SQLITE_READ, sqlite.SQLITE_FUNCTION:
 				return sqlite.SQLITE_OK
-			default:
-				return sqlite.SQLITE_DENY
+			case sqlite.SQLITE_PRAGMA:
+				switch arg1 {
+				case "table_info":
+					return sqlite.SQLITE_OK
+				}
 			}
+			return sqlite.SQLITE_DENY
 		})
 	}
 	return nil
