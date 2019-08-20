@@ -11,26 +11,27 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 
 	sqlite "github.com/mattn/go-sqlite3"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
-type Connection interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-	Exec(query string, args ...interface{}) (sql.Result, error)
-}
-
 type DB struct {
 	MigrationsTable string
 	MigrationsDir   string
 	DataSourceName  string
 	ReadOnly        bool
-	driverName      string
+	Funcs           map[string]interface{}
 	*sql.DB
 }
+
+type Connection interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+type JSON struct{ Value interface{} }
 
 func (db *DB) Open() error {
 	if db.DB != nil {
@@ -43,9 +44,9 @@ func (db *DB) Open() error {
 		db.MigrationsDir = "migrations"
 	}
 	db.migrate()
-	db.driverName = driverName()
-	sql.Register(db.driverName, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
-	sqlDB, err := sql.Open(db.driverName, db.DataSourceName)
+	driverName := driverName()
+	sql.Register(driverName, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
+	sqlDB, err := sql.Open(driverName, db.DataSourceName)
 	if err != nil {
 		return err
 	}
@@ -54,6 +55,9 @@ func (db *DB) Open() error {
 }
 
 func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
+	for name, f := range db.Funcs {
+		c.RegisterFunc(name, f, false)
+	}
 	if db.ReadOnly {
 		c.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
 			switch op {
@@ -70,8 +74,6 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 	}
 	return nil
 }
-
-func (db *DB) Close() error { return db.DB.Close() }
 
 func (db *DB) migrate() error {
 	sqlDB, err := sql.Open("sqlite3", db.DataSourceName)
@@ -116,7 +118,7 @@ func (db *DB) migrate() error {
 
 func (db *DB) Handler(params ...string) http.Handler {
 	if !db.ReadOnly {
-		panic(errors.New("cannot serve a writable db - set ReadOnly to true"))
+		panic(errors.New("must not serve a writable db - set ReadOnly to true"))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -124,7 +126,7 @@ func (db *DB) Handler(params ...string) http.Handler {
 		if len(params) == 0 {
 			params = []string{"query", "q"}
 		}
-		query, result := "", []interface{}{}
+		query, result := "", []map[string]JSON{}
 		for i := 0; i < len(params) && query == ""; i++ {
 			query = r.URL.Query().Get(params[i])
 		}
@@ -149,6 +151,14 @@ func Query(c Connection, queryString string, result interface{}, args ...interfa
 	return nil
 }
 
+func Exec(c Connection, queryString string, args ...interface{}) (sql.Result, error) {
+	result, err := c.Exec(queryString, args...)
+	if err != nil {
+		err = fmt.Errorf("%s: %s", queryString, err)
+	}
+	return result, err
+}
+
 func Insert(c Connection, table string, v interface{}, ignore bool) (sql.Result, error) {
 	rv, ks, qs, vs := reflect.ValueOf(v), []string{}, []string{}, []interface{}{}
 	switch rv.Kind() {
@@ -169,7 +179,7 @@ func Insert(c Connection, table string, v interface{}, ignore bool) (sql.Result,
 			}
 		}
 	default:
-		panic(fmt.Errorf("unhandled type %T", v))
+		return nil, fmt.Errorf("unhandled type %T", v)
 	}
 	maybeIgnore := ""
 	if ignore {
@@ -179,17 +189,9 @@ func Insert(c Connection, table string, v interface{}, ignore bool) (sql.Result,
 	return c.Exec(query, vs...)
 }
 
-func Exec(c Connection, queryString string, args ...interface{}) (sql.Result, error) {
-	result, err := c.Exec(queryString, args...)
-	if err != nil {
-		err = fmt.Errorf("%s: %s", queryString, err)
-	}
-	return result, err
-}
-
 func query(c Connection, query string, result interface{}, args ...interface{}) error {
 	xs := reflect.ValueOf(result)
-	if xs.Type().Kind() != reflect.Ptr || xs.Type().Elem().Kind() != reflect.Slice {
+	if xs.Kind() != reflect.Ptr || xs.Type().Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("cannot unmarshal query results into %t (%v)", result, result)
 	}
 	rows, err := c.Query(query, args...)
@@ -297,6 +299,7 @@ func scan(rows *sql.Rows, values []interface{}) error {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -305,14 +308,37 @@ func convert(src, dst interface{}) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := dst.(*interface{}); ok &&
-		len(bs) >= 4 && bs[0] == '"' && bs[len(bs)-1] == '"' &&
-		(bs[1] == '{' && bs[len(bs)-2] == '}' || bs[1] == '[' && bs[len(bs)-2] == ']') {
-		if s, err := strconv.Unquote(string(bs)); err == nil {
-			bs = []byte(s)
-		}
-	}
 	return json.Unmarshal(bs, dst)
+}
+
+func (j JSON) MarshalJSON() ([]byte, error) {
+	switch s, ok := j.Value.(string); {
+	case ok && isJSONArrayString(s):
+		xs := []JSON{}
+		if err := json.Unmarshal([]byte(s), &xs); err != nil {
+			break
+		}
+		return json.Marshal(xs)
+	case ok && isJSONObjectString(s):
+		xs := map[string]JSON{}
+		if err := json.Unmarshal([]byte(s), &xs); err != nil {
+			break
+		}
+		return json.Marshal(xs)
+	}
+	return json.Marshal(j.Value)
+}
+
+func (j *JSON) UnmarshalJSON(b []byte) error {
+	return json.Unmarshal(b, &j.Value)
+}
+
+func isJSONObjectString(s string) bool {
+	return len(s) >= 2 && s[0] == '{' && s[len(s)-1] == '}'
+}
+
+func isJSONArrayString(s string) bool {
+	return len(s) >= 2 && s[0] == '[' && s[len(s)-1] == ']'
 }
 
 func driverName() string {
@@ -320,5 +346,5 @@ func driverName() string {
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
-	return fmt.Sprintf("%X", b)
+	return fmt.Sprintf("sqlite3-%X", b)
 }

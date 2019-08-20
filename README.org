@@ -32,8 +32,33 @@ $ curl localhost:8000/api --silent --get --data-urlencode "query=SELECT * FROM s
 - but actually, there's an authorizer interface!
 
 -> https://stackoverflow.com/questions/3738328/safe-read-only-sqlite3-database
+
+https://sqlite.org/security.html
+- SQLITE_DBCONFIG_DEFENSIVE - solved just as well by disabling all write and pragma
+
+- use setLimit to set limits to suggested defaults
+
+- use something like https://sqlite.org/c3ref/progress_handler.html to cancel long running queries
+  not directly supported but there's QueryContext which should be good enough
+
+
+fucking pragma as table_function!
+->  Table-valued functions exist only for PRAGMAs that return results and that have no side-effects. https://www.sqlite.org/pragma.html
+
 * features
+- nested json -> convert to json shit
+
 
 SELECT * FROM sqlite_master
 -> returns schema! .sql contains the original create table statement
 -> can use that to expose a pretty schema, just like graphql!
+
+implement something akin to facettes from datasette?
+
+pragma table_info(table)
+-> https://stadtsport.niklasfasching.de/api?q=select%20*%20from%20pragma_table_info(%27events%27)
+
+
+-> analyze and create clickable interface maybe?
+
+query view, i.e. html query field and output as table
