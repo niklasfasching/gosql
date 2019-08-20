@@ -1,6 +1,7 @@
 package gosql
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mattn/go-sqlite3"
 	sqlite "github.com/mattn/go-sqlite3"
+	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 type Connection interface {
@@ -27,20 +28,8 @@ type DB struct {
 	MigrationsDir   string
 	DataSourceName  string
 	ReadOnly        bool
-
-	Connection *sqlite.SQLiteConn
+	driverName      string
 	*sql.DB
-}
-
-var connection *sqlite.SQLiteConn
-
-func init() {
-	sql.Register("gosqlite", &sqlite3.SQLiteDriver{
-		ConnectHook: func(c *sqlite.SQLiteConn) error {
-			connection = c
-			return nil
-		},
-	})
 }
 
 func (db *DB) Open() error {
@@ -53,18 +42,20 @@ func (db *DB) Open() error {
 	if db.MigrationsDir == "" {
 		db.MigrationsDir = "migrations"
 	}
-	sqlDB, err := sql.Open("gosqlite", db.DataSourceName)
+	db.migrate()
+	db.driverName = driverName()
+	sql.Register(db.driverName, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
+	sqlDB, err := sql.Open(db.driverName, db.DataSourceName)
 	if err != nil {
 		return err
 	}
 	db.DB = sqlDB
-	if err := db.migrate(); err != nil {
-		return err
-	}
-	db.Connection = connection
-	connection = nil
+	return nil
+}
+
+func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 	if db.ReadOnly {
-		db.Connection.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
+		c.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
 			switch op {
 			case sqlite.SQLITE_SELECT, sqlite.SQLITE_READ, sqlite.SQLITE_FUNCTION:
 				return sqlite.SQLITE_OK
@@ -79,13 +70,18 @@ func (db *DB) Open() error {
 func (db *DB) Close() error { return db.DB.Close() }
 
 func (db *DB) migrate() error {
+	sqlDB, err := sql.Open("sqlite3", db.DataSourceName)
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
 	t := db.MigrationsTable
 	q := fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s` (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)", t)
-	if _, err := db.DB.Exec(q); err != nil {
+	if _, err := sqlDB.Exec(q); err != nil {
 		return err
 	}
 	applied, m := []string{}, map[string]bool{}
-	if err := Query(db, fmt.Sprintf("SELECT name FROM `%s`", t), &applied); err != nil {
+	if err := Query(sqlDB, fmt.Sprintf("SELECT name FROM `%s`", t), &applied); err != nil {
 		return err
 	}
 	for _, sqlFile := range applied {
@@ -104,10 +100,10 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return err
 		}
-		if _, err = db.DB.Exec(string(bs)); err != nil {
+		if _, err = sqlDB.Exec(string(bs)); err != nil {
 			return err
 		}
-		if _, err := db.DB.Exec(fmt.Sprintf("INSERT INTO `%s` (name) VALUES (?)", t), sqlFile); err != nil {
+		if _, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO `%s` (name) VALUES (?)", t), sqlFile); err != nil {
 			return err
 		}
 	}
@@ -313,4 +309,12 @@ func convert(src, dst interface{}) error {
 		}
 	}
 	return json.Unmarshal(bs, dst)
+}
+
+func driverName() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf("%X", b)
 }
