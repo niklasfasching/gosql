@@ -1,7 +1,6 @@
 package gosql
 
 import (
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -21,7 +20,7 @@ type DB struct {
 	MigrationsTable string
 	MigrationsDir   string
 	DataSourceName  string
-	ReadOnly        bool
+	readOnly        bool
 	Funcs           map[string]interface{}
 	*sql.DB
 }
@@ -33,7 +32,10 @@ type Connection interface {
 
 type JSON struct{ Value interface{} }
 
-func (db *DB) Open() error {
+var driverIndex = 0
+
+func (db *DB) Open(readOnly bool) error {
+	db.readOnly = readOnly
 	if db.DB != nil {
 		return errors.New("already open")
 	}
@@ -44,7 +46,8 @@ func (db *DB) Open() error {
 		db.MigrationsDir = "migrations"
 	}
 	db.migrate()
-	driverName := driverName()
+	driverName := fmt.Sprintf("sqlite3-%d", driverIndex)
+	driverIndex++
 	sql.Register(driverName, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
 	sqlDB, err := sql.Open(driverName, db.DataSourceName)
 	if err != nil {
@@ -56,9 +59,11 @@ func (db *DB) Open() error {
 
 func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 	for name, f := range db.Funcs {
-		c.RegisterFunc(name, f, false)
+		if err := c.RegisterFunc(name, f, false); err != nil {
+			return err
+		}
 	}
-	if db.ReadOnly {
+	if db.readOnly {
 		c.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
 			switch op {
 			case sqlite.SQLITE_SELECT, sqlite.SQLITE_READ, sqlite.SQLITE_FUNCTION:
@@ -117,7 +122,7 @@ func (db *DB) migrate() error {
 }
 
 func (db *DB) Handler(params ...string) http.Handler {
-	if !db.ReadOnly {
+	if !db.readOnly {
 		panic(errors.New("must not serve a writable db - set ReadOnly to true"))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,12 +344,4 @@ func isJSONObjectString(s string) bool {
 
 func isJSONArrayString(s string) bool {
 	return len(s) >= 2 && s[0] == '[' && s[len(s)-1] == ']'
-}
-
-func driverName() string {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return fmt.Sprintf("sqlite3-%X", b)
 }
