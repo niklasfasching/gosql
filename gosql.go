@@ -18,7 +18,7 @@ import (
 
 type DB struct {
 	DataSourceName string
-	readOnly       bool
+	ReadOnly       bool
 	Funcs          map[string]interface{}
 	*sql.DB
 }
@@ -32,9 +32,8 @@ type JSON struct{ Value interface{} }
 
 var driverIndex = 0
 
-func (db *DB) Open(readOnly bool, migrations map[string]string) error {
+func (db *DB) Open(migrations map[string]string) error {
 	db.migrate(migrations)
-	db.readOnly = readOnly
 	if db.DB != nil {
 		return errors.New("already open")
 	}
@@ -58,20 +57,21 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 			return err
 		}
 	}
-	if db.readOnly {
-		c.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
-			switch op {
-			case sqlite.SQLITE_SELECT, sqlite.SQLITE_READ, sqlite.SQLITE_FUNCTION:
+	c.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
+		if !db.ReadOnly {
+			return sqlite.SQLITE_OK
+		}
+		switch op {
+		case sqlite.SQLITE_SELECT, sqlite.SQLITE_READ, sqlite.SQLITE_FUNCTION:
+			return sqlite.SQLITE_OK
+		case sqlite.SQLITE_PRAGMA:
+			switch arg1 {
+			case "table_info":
 				return sqlite.SQLITE_OK
-			case sqlite.SQLITE_PRAGMA:
-				switch arg1 {
-				case "table_info":
-					return sqlite.SQLITE_OK
-				}
 			}
-			return sqlite.SQLITE_DENY
-		})
-	}
+		}
+		return sqlite.SQLITE_DENY
+	})
 	return nil
 }
 
@@ -113,10 +113,10 @@ func (db *DB) migrate(migrations map[string]string) error {
 }
 
 func (db *DB) Handler(params ...string) http.Handler {
-	if !db.readOnly {
-		panic(errors.New("must not serve a writable db - set ReadOnly to true"))
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !db.ReadOnly {
+			panic(errors.New("must not serve a writable db - set ReadOnly to true"))
+		}
 		defer r.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
 		if len(params) == 0 {
