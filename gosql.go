@@ -17,11 +17,9 @@ import (
 )
 
 type DB struct {
-	MigrationsTable string
-	MigrationsDir   string
-	DataSourceName  string
-	readOnly        bool
-	Funcs           map[string]interface{}
+	DataSourceName string
+	readOnly       bool
+	Funcs          map[string]interface{}
 	*sql.DB
 }
 
@@ -34,18 +32,15 @@ type JSON struct{ Value interface{} }
 
 var driverIndex = 0
 
-func (db *DB) Open(readOnly bool) error {
+func (db *DB) Open(readOnly bool, migrations map[string]string) error {
+	db.migrate(migrations)
 	db.readOnly = readOnly
 	if db.DB != nil {
 		return errors.New("already open")
 	}
-	if db.MigrationsTable == "" {
-		db.MigrationsTable = "migrations"
+	if err := db.migrate(migrations); err != nil {
+		return err
 	}
-	if db.MigrationsDir == "" {
-		db.MigrationsDir = "migrations"
-	}
-	db.migrate()
 	driverName := fmt.Sprintf("sqlite3-%d", driverIndex)
 	driverIndex++
 	sql.Register(driverName, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
@@ -80,41 +75,37 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 	return nil
 }
 
-func (db *DB) migrate() error {
+func (db *DB) migrate(migrations map[string]string) error {
 	sqlDB, err := sql.Open("sqlite3", db.DataSourceName)
 	if err != nil {
 		return err
 	}
 	defer sqlDB.Close()
-	t := db.MigrationsTable
-	q := fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s` (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)", t)
+	q := "CREATE TABLE IF NOT EXISTS _migrations (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
 	if _, err := sqlDB.Exec(q); err != nil {
 		return err
 	}
-	applied, m := []string{}, map[string]bool{}
-	if err := Query(sqlDB, fmt.Sprintf("SELECT name FROM `%s`", t), &applied); err != nil {
+	names, applied := []string{}, map[string]bool{}
+	if err := Query(sqlDB, "SELECT name FROM _migrations", &names); err != nil {
 		return err
 	}
-	for _, sqlFile := range applied {
-		m[sqlFile] = true
+	for _, name := range names {
+		applied[name] = true
 	}
-	sqlFiles, err := filepath.Glob(filepath.Join(db.MigrationsDir, "*.sql"))
-	if err != nil {
-		return err
+	keys := []string{}
+	for key := range migrations {
+		keys = append(keys, key)
 	}
-	sort.Strings(sqlFiles)
-	for _, sqlFile := range sqlFiles {
-		if m[sqlFile] {
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		if applied[key] {
 			continue
 		}
-		bs, err := ioutil.ReadFile(sqlFile)
-		if err != nil {
+		if _, err = sqlDB.Exec(migrations[key]); err != nil {
 			return err
 		}
-		if _, err = sqlDB.Exec(string(bs)); err != nil {
-			return err
-		}
-		if _, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO `%s` (name) VALUES (?)", t), sqlFile); err != nil {
+		if _, err := sqlDB.Exec("INSERT INTO _migrations (name) VALUES (?)", key); err != nil {
 			return err
 		}
 	}
@@ -344,4 +335,20 @@ func isJSONObjectString(s string) bool {
 
 func isJSONArrayString(s string) bool {
 	return len(s) >= 2 && s[0] == '[' && s[len(s)-1] == ']'
+}
+
+func ReadMigrations(directory string) (map[string]string, error) {
+	m := map[string]string{}
+	sqlFiles, err := filepath.Glob(filepath.Join(directory, "*.sql"))
+	if err != nil {
+		return nil, err
+	}
+	for _, sqlFile := range sqlFiles {
+		bs, err := ioutil.ReadFile(sqlFile)
+		if err != nil {
+			return nil, err
+		}
+		m[sqlFile] = string(bs)
+	}
+	return m, nil
 }
