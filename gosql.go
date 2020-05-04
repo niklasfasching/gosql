@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -114,10 +115,12 @@ func (db *DB) migrate(migrations map[string]string) error {
 
 func (db *DB) Handler(params ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !db.ReadOnly {
-			panic(errors.New("must not serve a writable db - set ReadOnly to true"))
-		}
 		defer r.Body.Close()
+		if !db.ReadOnly {
+			log.Println("ERROR: must not serve a writable db - set db.ReadOnly to true")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if len(params) == 0 {
 			params = []string{"query", "q"}
