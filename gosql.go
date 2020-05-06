@@ -67,8 +67,12 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 			return sqlite.SQLITE_OK
 		case sqlite.SQLITE_PRAGMA:
 			switch arg1 {
-			case "table_info":
+			case "table_info", "data_version":
 				return sqlite.SQLITE_OK
+			case "user_version":
+				if arg2 == "" && arg3 == "" {
+					return sqlite.SQLITE_OK
+				}
 			}
 		}
 		return sqlite.SQLITE_DENY
@@ -141,6 +145,19 @@ func (db *DB) Handler(params ...string) http.Handler {
 		}
 		json.NewEncoder(w).Encode(result)
 	})
+}
+
+func (db *DB) GetVersion() (int, error) {
+	results := []int{}
+	if err := Query(db, "PRAGMA user_version", &results); err != nil {
+		return 0, err
+	}
+	return results[0], nil
+}
+
+func (db *DB) SetVersion(version int) error {
+	_, err := Exec(db, fmt.Sprintf("PRAGMA user_version = %d", version))
+	return err
 }
 
 func Query(c Connection, queryString string, result interface{}, args ...interface{}) error {
