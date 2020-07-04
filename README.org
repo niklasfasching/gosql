@@ -1,14 +1,20 @@
-* WIP
-a minimalist go sql wrapper that makes sense for the kind of projects i plan to do
-which is: exposing sqlite databases to the internet - as in allowing sql statements over http. yep... let's see how bad that really is
+A minimalist go sql wrapper that makes it easy to expose the db readonly over http.
+
+Exposing your database is always said to be a big no no - and I obviously agree with that for the general case.
+
+In some cases, not giving write access to randoms is enough though. We're fine with our clients being tightly coupled to our schema and
+having the full power of sql available in the frontend is actually a huge plus (e.g. small mostly read-only SPA).
+
+Well... sqlite allows us to register an [[https://www.sqlite.org/c3ref/c_alter_table.html][authorizer callback]] and makes it possible to expose a read only version of our db [fn:1]!
+There's more information on the sqlite [[https://sqlite.org/security.html][security page]] and there's more we could limit - I'm happy with just prohibiting write access for now though.
 
 #+begin_src go
 func main() {
-	db := &DB{DataSourceName: "./data.sqlite", ReadOnly: true}
+	db := &DB{DataSourceName: "./data.sqlite"}
 	if err := db.Open(); err != nil {
 		log.Fatal(err)
 	}
-	http.Handle("/api", db.Handler())
+	http.Handle("/api", http.HandlerFunc(db.Handler))
 	log.Fatal(http.ListenAndServe(":8000", nil))
 }
 #+end_src
@@ -18,47 +24,17 @@ $ curl localhost:8000/api --silent --get --data-urlencode "query=SELECT * FROM s
 # [
 #     {
 #         "name": "migrations",
-#         "rootpage": 2,
-#         "sql": "CREATE TABLE `migrations` (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+#         "rootpage": 2,#         "sql": "CREATE TABLE `migrations` (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
 #         "tbl_name": "migrations",
 #         "type": "table"
 #     }
 # ]
 #+end_src
-* security concerns
-- read only databases (mode=ro) still allow stuff like =attach database 'foobar.sqlite' as foobar= and thus gain access to other stuff
-- also pragma are available
-- attach can be disabled via limit attach
-- but actually, there's an authorizer interface!
 
--> https://stackoverflow.com/questions/3738328/safe-read-only-sqlite3-database
+Apart from just exposing the db as read only, gosql also tries to be clever about unmarshalling. I'm not sure where I'm going with that yet
+and just keep adding onto it whenever a side project needs it. So no documentation on that for now.
 
-https://sqlite.org/security.html
-- SQLITE_DBCONFIG_DEFENSIVE - solved just as well by disabling all write and pragma
-
-- use setLimit to set limits to suggested defaults
-
-- use something like https://sqlite.org/c3ref/progress_handler.html to cancel long running queries
-  not directly supported but there's QueryContext which should be good enough
-
-
-fucking pragma as table_function!
-->  Table-valued functions exist only for PRAGMAs that return results and that have no side-effects. https://www.sqlite.org/pragma.html
-
-* features
-- nested json -> convert to json shit
-
-
-SELECT * FROM sqlite_master
--> returns schema! .sql contains the original create table statement
--> can use that to expose a pretty schema, just like graphql!
-
-implement something akin to facettes from datasette?
-
-pragma table_info(table)
--> https://stadtsport.niklasfasching.de/api?q=select%20*%20from%20pragma_table_info(%27events%27)
-
-
--> analyze and create clickable interface maybe?
-
-query view, i.e. html query field and output as table
+* footnotes
+[fn:1]
+Using the readonly mode of sqlite itself is not enough - that still allows for various things apart from selects like "attach database '...'".
+We really don't want
