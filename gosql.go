@@ -81,6 +81,10 @@ func (db *DB) readOnlyConnectHook(c *sqlite.SQLiteConn) error {
 					return sqlite.SQLITE_OK
 				}
 			}
+		case sqlite.SQLITE_UPDATE: // necessary for fts5. see commit message
+			if arg1 == "sqlite_master" && arg3 == "main" {
+				return sqlite.SQLITE_OK
+			}
 		}
 		return sqlite.SQLITE_DENY
 	})
