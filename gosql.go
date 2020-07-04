@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -19,8 +18,8 @@ import (
 
 type DB struct {
 	DataSourceName string
-	ReadOnly       bool
 	Funcs          map[string]interface{}
+	RODB           *sql.DB
 	*sql.DB
 }
 
@@ -34,22 +33,24 @@ type JSON struct{ Value interface{} }
 var driverIndex = 0
 
 func (db *DB) Open(migrations map[string]string) error {
-	db.migrate(migrations)
 	if db.DB != nil {
 		return errors.New("already open")
 	}
-	if err := db.migrate(migrations); err != nil {
-		return err
-	}
-	driverName := fmt.Sprintf("sqlite3-%d", driverIndex)
+	rwDriver, roDriver := fmt.Sprintf("sqlite3-%d", driverIndex), fmt.Sprintf("sqlite3-read-only-%d", driverIndex)
 	driverIndex++
-	sql.Register(driverName, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
-	sqlDB, err := sql.Open(driverName, db.DataSourceName)
-	if err != nil {
+	sql.Register(rwDriver, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
+	sql.Register(roDriver, &sqlite3.SQLiteDriver{ConnectHook: db.readOnlyConnectHook})
+	if rwDB, err := sql.Open(rwDriver, db.DataSourceName); err != nil {
 		return err
+	} else {
+		db.DB = rwDB
 	}
-	db.DB = sqlDB
-	return nil
+	if roDB, err := sql.Open(roDriver, db.DataSourceName); err != nil {
+		return err
+	} else {
+		db.RODB = roDB
+	}
+	return db.migrate(migrations)
 }
 
 func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
@@ -58,10 +59,16 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 			return err
 		}
 	}
-	c.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
-		if !db.ReadOnly {
-			return sqlite.SQLITE_OK
+	return nil
+}
+
+func (db *DB) readOnlyConnectHook(c *sqlite.SQLiteConn) error {
+	for name, f := range db.Funcs {
+		if err := c.RegisterFunc(name, f, false); err != nil {
+			return err
 		}
+	}
+	c.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
 		switch op {
 		case sqlite.SQLITE_SELECT, sqlite.SQLITE_READ, sqlite.SQLITE_FUNCTION:
 			return sqlite.SQLITE_OK
@@ -81,17 +88,12 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 }
 
 func (db *DB) migrate(migrations map[string]string) error {
-	sqlDB, err := sql.Open("sqlite3", db.DataSourceName)
-	if err != nil {
-		return err
-	}
-	defer sqlDB.Close()
 	q := "CREATE TABLE IF NOT EXISTS _migrations (name STRING, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
-	if _, err := sqlDB.Exec(q); err != nil {
+	if _, err := db.Exec(q); err != nil {
 		return err
 	}
 	names, applied := []string{}, map[string]bool{}
-	if err := Query(sqlDB, "SELECT name FROM _migrations", &names); err != nil {
+	if err := Query(db, "SELECT name FROM _migrations", &names); err != nil {
 		return err
 	}
 	for _, name := range names {
@@ -107,44 +109,29 @@ func (db *DB) migrate(migrations map[string]string) error {
 		if applied[key] {
 			continue
 		}
-		if _, err = sqlDB.Exec(migrations[key]); err != nil {
+		if _, err := db.Exec(migrations[key]); err != nil {
 			return err
 		}
-		if _, err := sqlDB.Exec("INSERT INTO _migrations (name) VALUES (?)", key); err != nil {
+		if _, err := db.Exec("INSERT INTO _migrations (name) VALUES (?)", key); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (db *DB) Handler(params ...string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		if !db.ReadOnly {
-			log.Println("ERROR: must not serve a writable db - set db.ReadOnly to true")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if len(params) == 0 {
-			params = []string{"query", "q"}
-		}
-		query, result := "", []map[string]JSON{}
-		for i := 0; i < len(params) && query == ""; i++ {
-			query = r.URL.Query().Get(params[i])
-		}
-		if query == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "query must not be empty"})
-			return
-		}
-		if err := Query(db, query, &result); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		json.NewEncoder(w).Encode(result)
-	})
+func (db *DB) Handler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	query, args, results := r.URL.Query().Get("query"), []interface{}{}, []map[string]JSON{}
+	for _, arg := range r.URL.Query()["arg"] {
+		args = append(args, arg)
+	}
+	if err := Query(db.RODB, query, &results, args...); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	} else {
+		json.NewEncoder(w).Encode(results)
+	}
 }
 
 func (db *DB) GetVersion() (int, error) {
