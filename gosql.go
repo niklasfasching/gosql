@@ -168,22 +168,29 @@ func Exec(c Connection, queryString string, args ...interface{}) (sql.Result, er
 
 func Insert(c Connection, table string, v interface{}, ignore bool) (sql.Result, error) {
 	rv, ks, qs, vs := reflect.ValueOf(v), []string{}, []string{}, []interface{}{}
+	add := func(k string, v interface{}) {
+		ks = append(ks, k)
+		qs = append(qs, "?")
+		vs = append(vs, v)
+	}
 	switch rv.Kind() {
 	case reflect.Map:
 		m := rv.MapRange()
 		for m.Next() {
-			ks = append(ks, m.Key().String())
-			qs = append(qs, "?")
 			switch v := m.Value().Elem(); v.Kind() {
 			case reflect.Map, reflect.Struct, reflect.Slice:
 				bs, err := json.Marshal(v.Interface())
 				if err != nil {
 					return nil, err
 				}
-				vs = append(vs, string(bs))
+				add(m.Key().String(), string(bs))
 			default:
-				vs = append(vs, v.Interface())
+				add(m.Key().String(), v.Interface())
 			}
+		}
+	case reflect.Struct:
+		for i, rt := 0, rv.Type(); i < rv.NumField(); i++ {
+			add(rt.Field(i).Name, rv.Field(i).Interface())
 		}
 	default:
 		return nil, fmt.Errorf("unhandled type %T", v)
