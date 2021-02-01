@@ -32,10 +32,22 @@ type JSON struct{ Value interface{} }
 
 var driverIndex = 0
 
+var defaultFuncs = map[string]interface{}{
+	"json_includes": jsonIncludes,
+}
+
 func (db *DB) Open(migrations map[string]string) error {
 	if db.DB != nil {
 		return errors.New("already open")
 	}
+	funcs := map[string]interface{}{}
+	for k, v := range defaultFuncs {
+		funcs[k] = v
+	}
+	for k, v := range db.Funcs {
+		funcs[k] = v
+	}
+	db.Funcs = funcs
 	rwDriver, roDriver := fmt.Sprintf("sqlite3-%d", driverIndex), fmt.Sprintf("sqlite3-read-only-%d", driverIndex)
 	driverIndex++
 	sql.Register(rwDriver, &sqlite3.SQLiteDriver{ConnectHook: db.connectHook})
@@ -369,4 +381,17 @@ func ReadMigrations(directory string) (map[string]string, error) {
 		m[sqlFile] = string(bs)
 	}
 	return m, nil
+}
+
+func jsonIncludes(s string, v interface{}) (bool, error) {
+	xs := []interface{}{}
+	if err := json.Unmarshal([]byte(s), &xs); err != nil {
+		return false, err
+	}
+	for _, x := range xs {
+		if fmt.Sprintf("%v", x) == fmt.Sprintf("%v", v) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
