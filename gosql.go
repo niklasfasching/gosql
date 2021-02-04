@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -33,8 +34,11 @@ type JSON struct{ Value interface{} }
 var driverIndex = 0
 
 var defaultFuncs = map[string]interface{}{
-	"json_includes": jsonIncludes,
+	"json_includes":  jsonIncludes,
+	"regexp_extract": regexpExtract,
 }
+
+var regexpExtractRegexps = map[string]*regexp.Regexp{}
 
 func (db *DB) Open(migrations map[string]string) error {
 	if db.DB != nil {
@@ -394,4 +398,19 @@ func jsonIncludes(s string, v interface{}) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func regexpExtract(input, regexpString string, i int) (string, error) {
+	r, err := regexpExtractRegexps[regexpString], error(nil)
+	if r == nil {
+		r, err = regexp.Compile(regexpString)
+		if err != nil {
+			return "", err
+		}
+		regexpExtractRegexps[regexpString] = r
+	}
+	if m := r.FindStringSubmatch(input); len(m) > i {
+		return m[i], nil
+	}
+	return "", nil
 }
