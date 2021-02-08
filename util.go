@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -21,6 +22,7 @@ type JSON struct{ Value interface{} }
 var defaultFuncs = map[string]interface{}{
 	"json_includes":  jsonIncludes,
 	"regexp_extract": regexpExtract,
+	"haversine":      haversine,
 }
 
 var regexpExtractRegexps = map[string]*regexp.Regexp{}
@@ -271,4 +273,15 @@ func regexpExtract(input, regexpString string, i int) (string, error) {
 		return m[i], nil
 	}
 	return "", nil
+}
+
+func haversine(latA, lngA, latB, lngB float64) float64 {
+	latA = latA * math.Pi / 180
+	lngA = lngA * math.Pi / 180
+	latB = latB * math.Pi / 180
+	lngB = lngB * math.Pi / 180
+	dLat, dLng := latB-latA, lngB-lngA
+	a := math.Pow(math.Sin(dLat/2), 2) + math.Cos(latA)*math.Cos(latB)*math.Pow(math.Sin(dLng/2), 2)
+	c := 2 * math.Asin(math.Sqrt(a))
+	return c * 6371 // earth radius km
 }
