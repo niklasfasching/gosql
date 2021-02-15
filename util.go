@@ -42,7 +42,7 @@ func Exec(c Connection, queryString string, args ...interface{}) (sql.Result, er
 	return result, err
 }
 
-func Insert(c Connection, table string, v interface{}, ignore bool) (sql.Result, error) {
+func Insert(c Connection, table string, v interface{}, or string) (sql.Result, error) {
 	rv, ks, qs, vs := reflect.ValueOf(v), []string{}, []string{}, []interface{}{}
 	add := func(k string, v interface{}) {
 		ks = append(ks, k)
@@ -71,11 +71,7 @@ func Insert(c Connection, table string, v interface{}, ignore bool) (sql.Result,
 	default:
 		return nil, fmt.Errorf("unhandled type %T", v)
 	}
-	maybeIgnore := ""
-	if ignore {
-		maybeIgnore = "OR IGNORE"
-	}
-	query := fmt.Sprintf("INSERT %s INTO %s (%s) VALUES (%s)", maybeIgnore, table, strings.Join(ks, ", "), strings.Join(qs, ", "))
+	query := fmt.Sprintf("INSERT %s INTO %s (%s) VALUES (%s)", or, table, strings.Join(ks, ", "), strings.Join(qs, ", "))
 	return c.Exec(query, vs...)
 }
 
