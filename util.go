@@ -25,6 +25,8 @@ var defaultFuncs = map[string]interface{}{
 	"json_includes":  PureFunc(jsonIncludes),
 	"regexp_extract": PureFunc(regexpExtract),
 	"geo_haversine":  PureFunc(haversine),
+	"geo_offset_lat": PureFunc(offsetLat),
+	"geo_offset_lng": PureFunc(offsetLng),
 }
 
 var regexpExtractRegexps = map[string]*regexp.Regexp{}
@@ -274,6 +276,8 @@ func regexpExtract(input, regexpString string, i int) (string, error) {
 	return "", nil
 }
 
+var earthRadiusKM float64 = 6371
+
 func haversine(latA, lngA, latB, lngB float64) float64 {
 	latA = latA * math.Pi / 180
 	lngA = lngA * math.Pi / 180
@@ -282,5 +286,18 @@ func haversine(latA, lngA, latB, lngB float64) float64 {
 	dLat, dLng := latB-latA, lngB-lngA
 	a := math.Pow(math.Sin(dLat/2), 2) + math.Cos(latA)*math.Cos(latB)*math.Pow(math.Sin(dLng/2), 2)
 	c := 2 * math.Asin(math.Sqrt(a))
-	return c * 6371 // earth radius km
+	return c * earthRadiusKM
+}
+
+func offsetLat(latA, lngA, bearing, km float64) float64 {
+	d, latA, lngA, bearing := km/earthRadiusKM, latA*math.Pi/180, lngA*math.Pi/180, bearing*math.Pi/180
+	latB := math.Asin(math.Sin(latA)*math.Cos(d) + math.Cos(latA)*math.Sin(d)*math.Cos(bearing))
+	return latB * 180 / math.Pi
+}
+
+func offsetLng(latA, lngA, bearing, km float64) float64 {
+	d, latA, lngA, bearing := km/earthRadiusKM, latA*math.Pi/180, lngA*math.Pi/180, bearing*math.Pi/180
+	latB := math.Asin(math.Sin(latA)*math.Cos(d) + math.Cos(latA)*math.Sin(d)*math.Cos(bearing))
+	lngB := lngA + math.Atan2(math.Sin(bearing)*math.Sin(d)*math.Cos(latA), math.Cos(d)-math.Sin(latA)*math.Sin(latB))
+	return lngB * 180 / math.Pi
 }
