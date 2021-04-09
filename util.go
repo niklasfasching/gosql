@@ -19,10 +19,12 @@ type Connection interface {
 
 type JSON struct{ Value interface{} }
 
+type PureFunc interface{}
+
 var defaultFuncs = map[string]interface{}{
-	"json_includes":  jsonIncludes,
-	"regexp_extract": regexpExtract,
-	"haversine":      haversine,
+	"json_includes":  PureFunc(jsonIncludes),
+	"regexp_extract": PureFunc(regexpExtract),
+	"haversine":      PureFunc(haversine),
 }
 
 var regexpExtractRegexps = map[string]*regexp.Regexp{}

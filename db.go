@@ -52,7 +52,8 @@ func (db *DB) Open(migrations map[string]string) error {
 
 func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 	for name, f := range db.Funcs {
-		if err := c.RegisterFunc(name, f, false); err != nil {
+		_, isPure := f.(PureFunc)
+		if err := c.RegisterFunc(name, f, isPure); err != nil {
 			return err
 		}
 	}
@@ -61,7 +62,8 @@ func (db *DB) connectHook(c *sqlite.SQLiteConn) error {
 
 func (db *DB) readOnlyConnectHook(c *sqlite.SQLiteConn) error {
 	for name, f := range db.Funcs {
-		if err := c.RegisterFunc(name, f, false); err != nil {
+		_, isPure := f.(PureFunc)
+		if err := c.RegisterFunc(name, f, isPure); err != nil {
 			return err
 		}
 	}
