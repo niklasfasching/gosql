@@ -243,17 +243,18 @@ func ReadMigrations(directory string) (map[string]string, error) {
 	return m, nil
 }
 
-func jsonIncludes(s string, v interface{}) (bool, error) {
-	xs := []interface{}{}
+func jsonIncludes(s string, vs ...interface{}) (bool, error) {
+	m, xs := map[string]bool{}, []interface{}{}
 	if err := json.Unmarshal([]byte(s), &xs); err != nil {
 		return false, err
 	}
-	for _, x := range xs {
-		if fmt.Sprintf("%v", x) == fmt.Sprintf("%v", v) {
-			return true, nil
-		}
+	for _, v := range vs {
+		m[fmt.Sprintf("%v", v)] = true
 	}
-	return false, nil
+	for _, x := range xs {
+		delete(m, fmt.Sprintf("%v", x))
+	}
+	return len(m) == 0, nil
 }
 
 func regexpExtract(input, regexpString string, i int) (string, error) {
