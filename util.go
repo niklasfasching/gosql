@@ -24,7 +24,7 @@ type PureFunc interface{}
 var defaultFuncs = map[string]interface{}{
 	"json_includes":  PureFunc(jsonIncludes),
 	"regexp_extract": PureFunc(regexpExtract),
-	"haversine":      PureFunc(haversine),
+	"geo_haversine":  PureFunc(haversine),
 }
 
 var regexpExtractRegexps = map[string]*regexp.Regexp{}
