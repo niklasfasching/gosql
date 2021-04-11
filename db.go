@@ -123,7 +123,6 @@ func (db *DB) migrate(migrations map[string]string) error {
 }
 
 func (db *DB) Handler(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
 	w.Header().Set("Content-Type", "application/json")
 	query, args, results := r.URL.Query().Get("query"), []interface{}{}, []map[string]JSON{}
 	for _, arg := range r.URL.Query()["arg"] {
