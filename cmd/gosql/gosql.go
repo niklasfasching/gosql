@@ -1,30 +1,26 @@
 package main
 
 import (
+	"flag"
 	"log"
-	"os"
 	"strings"
 
 	"github.com/niklasfasching/gosql"
 )
 
+var debug = flag.Bool("d", false, "print debug output (query plan & execution time)")
+
 func main() {
-	if len(os.Args) < 2 {
+	flag.Parse()
+	args, debug := flag.Args(), *debug
+	if len(args) < 2 {
 		log.Fatal("gosql DB_FILE [QUERY]")
 	}
-	db := &gosql.DB{DataSourceName: os.Args[1]}
+	db := &gosql.DB{DataSourceName: args[0]}
 	if err := db.Open(nil); err != nil {
 		log.Fatal(err)
 	}
-	if len(os.Args) == 2 {
-		if err := gosql.REPL(db, "> "); err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		if rows, err := db.Query(strings.Join(os.Args[2:], " ")); err != nil {
-			log.Fatal(err)
-		} else if err := gosql.Table(os.Stdout, rows); err != nil {
-			log.Fatal(err)
-		}
+	if err := gosql.Print(db, debug, strings.Join(args[1:], " ")); err != nil {
+		log.Fatal(err)
 	}
 }

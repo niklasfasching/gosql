@@ -4,12 +4,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type Connection interface {
@@ -30,6 +33,54 @@ var defaultFuncs = map[string]interface{}{
 }
 
 var regexpExtractRegexps = map[string]*regexp.Regexp{}
+
+func Print(db *DB, debug bool, query string, args ...interface{}) error {
+	start := time.Now()
+	if debug {
+		if err := printQuery(os.Stderr, db, "explain query plan "+query, args...); err != nil {
+			return err
+		}
+	}
+	if err := printQuery(os.Stdout, db, query, args...); err != nil {
+		return err
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, `{"time": %q}`+"\n", time.Since(start))
+	}
+	return nil
+}
+
+func printQuery(w io.Writer, db *DB, query string, args ...interface{}) error {
+	j := json.NewEncoder(w)
+	j.SetIndent("", "  ")
+	j.SetEscapeHTML(false)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return err
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		for i := range values {
+			values[i] = new(interface{})
+		}
+		if err := rows.Scan(values...); err != nil {
+			return err
+		}
+		m := map[string]interface{}{}
+		for i, k := range columns {
+			m[k] = values[i]
+		}
+
+		if err := j.Encode(m); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
 
 func Query(c Connection, queryString string, result interface{}, args ...interface{}) error {
 	if err := query(c, queryString, result, args...); err != nil {
